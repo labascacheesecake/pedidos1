@@ -292,6 +292,39 @@
 </div>
 
 <script>
+// Camada de armazenamento: usa window.storage quando disponível (preview do Claude.ai),
+// e cai automaticamente para localStorage em qualquer outro lugar (GitHub Pages, arquivo local, etc.)
+const storage = (function(){
+  if(typeof window !== 'undefined' && window.storage){
+    return window.storage;
+  }
+  const PREFIX = 'labasca_pedidos::';
+  return {
+    async get(key){
+      const raw = localStorage.getItem(PREFIX+key);
+      if(raw === null){ throw new Error('key not found: '+key); }
+      return { key, value: raw };
+    },
+    async set(key, value){
+      localStorage.setItem(PREFIX+key, value);
+      return { key, value };
+    },
+    async delete(key){
+      localStorage.removeItem(PREFIX+key);
+      return { key, deleted:true };
+    },
+    async list(prefix){
+      const p = PREFIX + (prefix || '');
+      const keys = [];
+      for(let i=0;i<localStorage.length;i++){
+        const k = localStorage.key(i);
+        if(k && k.startsWith(p)) keys.push(k.substring(PREFIX.length));
+      }
+      return { keys };
+    }
+  };
+})();
+
 const PRODUTOS = {
   'La Blanca': 25, 'La Roja': 30, 'La Rosita': 30, 'La Oscura': 30, 'La Dorada': 30
 };
@@ -443,12 +476,12 @@ function limparForm(){
 
 async function proximoNumero(){
   try{
-    const r = await window.storage.get('pedidos:contador');
+    const r = await storage.get('pedidos:contador');
     const n = r ? (parseInt(r.value)+1) : 1;
-    await window.storage.set('pedidos:contador', String(n));
+    await storage.set('pedidos:contador', String(n));
     return n;
   }catch(e){
-    await window.storage.set('pedidos:contador', '1');
+    await storage.set('pedidos:contador', '1');
     return 1;
   }
 }
@@ -464,30 +497,30 @@ async function salvarPedido(){
     toast('Informe o endereço de entrega'); return;
   }
 
-  const numero = await proximoNumero();
-  const total = calcularTotal();
-
-  const pedido = {
-    id: 'p' + Date.now(),
-    numero,
-    criadoEm: new Date().toISOString(),
-    cliente: { nome, telefone },
-    entrega: {
-      tipo: entregaTipo,
-      endereco: entregaTipo==='delivery' ? document.getElementById('fEndereco').value.trim() : '',
-      frete: entregaTipo==='delivery' ? (parseFloat(document.getElementById('fFrete').value)||0) : 0,
-      data: document.getElementById('fData').value,
-      horario: document.getElementById('fHorario').value
-    },
-    itens,
-    pagamento: { forma: pagamentoForma, status: pagamentoStatus },
-    observacoes: document.getElementById('fObs').value.trim(),
-    total,
-    status: 'pendente'
-  };
-
   try{
-    const res = await window.storage.set('pedido:'+pedido.id, JSON.stringify(pedido));
+    const numero = await proximoNumero();
+    const total = calcularTotal();
+
+    const pedido = {
+      id: 'p' + Date.now(),
+      numero,
+      criadoEm: new Date().toISOString(),
+      cliente: { nome, telefone },
+      entrega: {
+        tipo: entregaTipo,
+        endereco: entregaTipo==='delivery' ? document.getElementById('fEndereco').value.trim() : '',
+        frete: entregaTipo==='delivery' ? (parseFloat(document.getElementById('fFrete').value)||0) : 0,
+        data: document.getElementById('fData').value,
+        horario: document.getElementById('fHorario').value
+      },
+      itens,
+      pagamento: { forma: pagamentoForma, status: pagamentoStatus },
+      observacoes: document.getElementById('fObs').value.trim(),
+      total,
+      status: 'pendente'
+    };
+
+    const res = await storage.set('pedido:'+pedido.id, JSON.stringify(pedido));
     if(!res){ toast('Erro ao salvar. Tente novamente.'); return; }
     toast('Pedido #' + numero + ' salvo');
     limparForm();
@@ -500,12 +533,12 @@ async function salvarPedido(){
 
 async function carregarPedidos(){
   try{
-    const listResult = await window.storage.list('pedido:');
+    const listResult = await storage.list('pedido:');
     if(!listResult || !listResult.keys) return [];
     const pedidos = [];
     for(const key of listResult.keys){
       try{
-        const r = await window.storage.get(key);
+        const r = await storage.get(key);
         if(r && r.value) pedidos.push(JSON.parse(r.value));
       }catch(e){}
     }
@@ -569,11 +602,11 @@ function formatarData(iso){
 
 async function toggleStatus(id){
   try{
-    const r = await window.storage.get('pedido:'+id);
+    const r = await storage.get('pedido:'+id);
     if(!r) return;
     const p = JSON.parse(r.value);
     p.status = p.status === 'pendente' ? 'concluido' : 'pendente';
-    await window.storage.set('pedido:'+id, JSON.stringify(p));
+    await storage.set('pedido:'+id, JSON.stringify(p));
     renderLista();
   }catch(e){ toast('Erro ao atualizar pedido'); }
 }
@@ -581,7 +614,7 @@ async function toggleStatus(id){
 async function excluirPedido(id){
   if(!confirm('Excluir este pedido? Essa ação não pode ser desfeita.')) return;
   try{
-    await window.storage.delete('pedido:'+id);
+    await storage.delete('pedido:'+id);
     toast('Pedido excluído');
     renderLista();
   }catch(e){ toast('Erro ao excluir pedido'); }
@@ -593,7 +626,7 @@ function fecharNotinha(){
 
 async function imprimirNotinha(id){
   try{
-    const r = await window.storage.get('pedido:'+id);
+    const r = await storage.get('pedido:'+id);
     if(!r){ toast('Não encontrei esse pedido'); return; }
     const p = JSON.parse(r.value);
     const content = document.getElementById('receiptContent');
